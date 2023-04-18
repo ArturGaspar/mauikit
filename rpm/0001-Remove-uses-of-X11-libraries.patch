@@ -1,0 +1,238 @@
+From 5c77436c41d1f109e3d44871296cd65b96b3ddb6 Mon Sep 17 00:00:00 2001
+From: Artur Gaspar <artur.gaspar.00@gmail.com>
+Date: Tue, 18 Apr 2023 16:07:37 -0300
+Subject: [PATCH] Remove uses of X11 libraries.
+
+---
+ CMakeLists.txt                                | 20 -------
+ src/CMakeLists.txt                            |  7 ---
+ src/platforms/linux/blurhelper/windowblur.cpp | 35 -----------
+ src/platforms/linux/windowhelper.cpp          | 60 -------------------
+ src/platforms/linux/windowhelper.h            |  2 -
+ 5 files changed, 124 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 57a67afd..ec7e19e5 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -58,27 +58,7 @@ if(ANDROID)
+     find_package(Gradle REQUIRED)
+ elseif(UNIX AND NOT ANDROID)
+     if(NOT APPLE)
+-        # Do not find X11 on macOS
+-        find_package(Qt5 ${REQUIRED_QT_VERSION} REQUIRED COMPONENTS X11Extras)
+         find_package(KF5 ${REQUIRED_KF5_VERSION} REQUIRED COMPONENTS WindowSystem)
+-        find_package(XCB 1.10 REQUIRED COMPONENTS
+-    ICCCM
+-    SHAPE
+-    XCB
+-)
+-set_package_properties(XCB PROPERTIES TYPE REQUIRED)
+-
+-# and the optional XCB dependencies
+-#if (XCB_ICCCM_VERSION VERSION_LESS "0.4")
+-    #set(XCB_ICCCM_FOUND FALSE)
+-#endif()
+-#add_feature_info("XCB-ICCCM" XCB_ICCCM_FOUND "Required for building test applications for KWin")
+-
+-#find_package(X11_XCB)
+-#set_package_properties(X11_XCB PROPERTIES
+-    #PURPOSE "Required for building X11 windowed backend of kwin_wayland"
+-    #TYPE OPTIONAL)
+-    
+     endif()
+     find_package(KF5 ${REQUIRED_KF5_VERSION} REQUIRED COMPONENTS Config)
+ endif()
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index 779bfbb2..49575b36 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -117,12 +117,6 @@ if (ANDROID)
+     #    kde_enable_exceptions(MauiKit PRIVATE)
+ elseif(UNIX AND NOT APPLE)
+ 
+-set(kwin_XCB_LIBS   
+-    XCB::ICCCM   
+-    XCB::SHAPE   
+-    XCB::XCB
+-)
+-
+     set(mauikit_PLATFORM_SRCS
+         platforms/linux/mauilinux.cpp
+         )
+@@ -271,7 +265,6 @@ elseif(UNIX AND NOT ANDROID)
+         target_link_libraries(MauiKit 
+         PRIVATE 
+         KF5::WindowSystem
+-        Qt5::X11Extras
+         )
+     endif()
+     target_link_libraries(MauiKit PRIVATE KF5::ConfigCore)
+diff --git a/src/platforms/linux/blurhelper/windowblur.cpp b/src/platforms/linux/blurhelper/windowblur.cpp
+index c0e1778d..ce13d386 100644
+--- a/src/platforms/linux/blurhelper/windowblur.cpp
++++ b/src/platforms/linux/blurhelper/windowblur.cpp
+@@ -22,11 +22,7 @@
+ #include <QApplication>
+ #include <QPainterPath>
+ #include <QScreen>
+-#include <QX11Info>
+ 
+-#include <xcb/xcb.h>
+-#include <xcb/shape.h>
+-#include <xcb/xcb_icccm.h>
+ #include <KWindowSystem>
+ #include <KWindowEffects>
+ #include "mauiapp.h"
+@@ -136,35 +132,4 @@ void WindowBlur::updateBlur()
+         KWindowEffects::enableBackgroundContrast(m_view, m_enabled);
+         return;
+     }
+-    
+-    xcb_connection_t *c = QX11Info::connection();
+-    if (!c)
+-        return;
+-    
+-    const QByteArray effectName = QByteArrayLiteral("_KDE_NET_WM_BLUR_BEHIND_REGION");
+-    xcb_intern_atom_cookie_t atomCookie = xcb_intern_atom_unchecked(c, false, effectName.length(), effectName.constData());
+-    QScopedPointer<xcb_intern_atom_reply_t, QScopedPointerPodDeleter> atom(xcb_intern_atom_reply(c, atomCookie, nullptr));
+-    if (!atom)
+-        return;
+-    
+-    if (m_enabled) {
+-        qreal devicePixelRatio = m_view->screen()->devicePixelRatio();
+-        QPainterPath path;
+-        path.addRoundedRect(QRect(QPoint(0, 0), m_view->size() * devicePixelRatio),
+-                            m_windowRadius * devicePixelRatio,
+-                            m_windowRadius * devicePixelRatio);
+-        QVector<uint32_t> data;
+-        foreach (const QPolygonF &polygon, path.toFillPolygons()) {
+-            QRegion region = polygon.toPolygon();
+-            for (auto i = region.begin(); i != region.end(); ++i) {
+-                data << i->x() << i->y() << i->width() << i->height();
+-            }
+-        }
+-        
+-        xcb_change_property(c, XCB_PROP_MODE_REPLACE, m_view->winId(), atom->atom, XCB_ATOM_CARDINAL,
+-                            32, data.size(), data.constData());
+-        
+-    } else {
+-        xcb_delete_property(c, m_view->winId(), atom->atom);
+-    }
+ }
+diff --git a/src/platforms/linux/windowhelper.cpp b/src/platforms/linux/windowhelper.cpp
+index 4a9512d3..e4e1d7e4 100644
+--- a/src/platforms/linux/windowhelper.cpp
++++ b/src/platforms/linux/windowhelper.cpp
+@@ -25,41 +25,10 @@
+ 
+ #include <KWindowSystem>
+ 
+-static uint qtEdgesToXcbMoveResizeDirection(Qt::Edges edges)
+-{
+-    if (edges == (Qt::TopEdge | Qt::LeftEdge))
+-        return 0;
+-    if (edges == Qt::TopEdge)
+-        return 1;
+-    if (edges == (Qt::TopEdge | Qt::RightEdge))
+-        return 2;
+-    if (edges == Qt::RightEdge)
+-        return 3;
+-    if (edges == (Qt::RightEdge | Qt::BottomEdge))
+-        return 4;
+-    if (edges == Qt::BottomEdge)
+-        return 5;
+-    if (edges == (Qt::BottomEdge | Qt::LeftEdge))
+-        return 6;
+-    if (edges == Qt::LeftEdge)
+-        return 7;
+-
+-    return 0;
+-}
+-
+ WindowHelper::WindowHelper(QObject *parent)
+     : QObject(parent)
+-    , m_moveResizeAtom(0)
+     , m_compositing(false)
+ {
+-    // create move-resize atom
+-    // ref: https://github.com/qt/qtbase/blob/9db7cc79a26ced4997277b5c206ca15949133240/src/plugins/platforms/xcb/qxcbwindow.cpp
+-    xcb_connection_t* connection(QX11Info::connection());
+-    const QString atomName(QStringLiteral("_NET_WM_MOVERESIZE"));
+-    xcb_intern_atom_cookie_t cookie(xcb_intern_atom(connection, false, atomName.size(), qPrintable(atomName)));
+-    QScopedPointer<xcb_intern_atom_reply_t> reply(xcb_intern_atom_reply(connection, cookie, nullptr));
+-    m_moveResizeAtom = reply ? reply->atom : 0;
+-
+     onCompositingChanged(KWindowSystem::compositingActive());
+     connect(KWindowSystem::self(), &KWindowSystem::compositingChanged, this, &WindowHelper::onCompositingChanged);
+ }
+@@ -71,12 +40,10 @@ bool WindowHelper::compositing() const
+ 
+ void WindowHelper::startSystemMove(QWindow *w)
+ {
+-    doStartSystemMoveResize(w, 16);
+ }
+ 
+ void WindowHelper::startSystemResize(QWindow *w, Qt::Edges edges)
+ {
+-    doStartSystemMoveResize(w, edges);
+ }
+ 
+ void WindowHelper::minimizeWindow(QWindow *w)
+@@ -84,33 +51,6 @@ void WindowHelper::minimizeWindow(QWindow *w)
+     KWindowSystem::minimizeWindow(w->winId());
+ }
+ 
+-void WindowHelper::doStartSystemMoveResize(QWindow *w, int edges)
+-{
+-    const qreal dpiRatio = qApp->devicePixelRatio();
+-
+-    xcb_connection_t *connection(QX11Info::connection());
+-    xcb_client_message_event_t xev;
+-    xev.response_type = XCB_CLIENT_MESSAGE;
+-    xev.type = m_moveResizeAtom;
+-    xev.sequence = 0;
+-    xev.window = w->winId();
+-    xev.format = 32;
+-    xev.data.data32[0] = QCursor::pos().x() * dpiRatio;
+-    xev.data.data32[1] = QCursor::pos().y() * dpiRatio;
+-
+-    if (edges == 16)
+-        xev.data.data32[2] = 8; // move
+-    else
+-        xev.data.data32[2] = qtEdgesToXcbMoveResizeDirection(Qt::Edges(edges));
+-
+-    xev.data.data32[3] = XCB_BUTTON_INDEX_1;
+-    xev.data.data32[4] = 0;
+-    xcb_ungrab_pointer(connection, XCB_CURRENT_TIME);
+-    xcb_send_event(connection, false, QX11Info::appRootWindow(),
+-                   XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT | XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY,
+-                   (const char *)&xev);
+-}
+-
+ void WindowHelper::onCompositingChanged(bool enabled)
+ {
+     if (enabled != m_compositing) {
+diff --git a/src/platforms/linux/windowhelper.h b/src/platforms/linux/windowhelper.h
+index 67ce561b..dc89c859 100644
+--- a/src/platforms/linux/windowhelper.h
++++ b/src/platforms/linux/windowhelper.h
+@@ -22,7 +22,6 @@
+ 
+ #include <QObject>
+ #include <QWindow>
+-#include <xcb/xcb.h>
+ 
+ class WindowHelper : public QObject
+ {
+@@ -47,7 +46,6 @@ private:
+     void onCompositingChanged(bool enabled);
+ 
+ private:
+-    xcb_atom_t m_moveResizeAtom;
+     bool m_compositing;
+ };
+ 
+-- 
+2.40.0
+
